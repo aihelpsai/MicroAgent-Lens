@@ -22,3 +22,15 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Type checking / lint caches
+.mypy_cache/
+.ruff_cache/
+
+# Local database
+*.db
+*.sqlite
+*.sqlite3
+
+# Claude Code local settings (not shared)
+.claude/settings.local.json
