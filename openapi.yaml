@@ -1,0 +1,373 @@
+openapi: 3.0.3
+info:
+  title: MicroAgent-Lens API
+  description: Agent 运行时调试器后端契约，SDK 与跨语言 SDK 的唯一协议来源。WebSocket 端点 /v1/stream 不在本文件内，见 docs/design/2026-10-16-通信协议-v0.1.md。
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:7878
+
+paths:
+  /v1/sessions:
+    post:
+      summary: 创建调试会话
+      operationId: create_session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: 会话已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+    get:
+      summary: 会话列表
+      operationId: list_sessions
+      responses:
+        "200":
+          description: 会话概要列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SessionSummary"
+
+  /v1/sessions/{session_id}:
+    get:
+      summary: 会话详情 + trace 树 + 待处理决策
+      operationId: get_session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: 会话详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: "#/components/schemas/Session"
+                  trace:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TraceNode"
+                  pending_decisions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DecisionSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/sessions/{session_id}/end:
+    post:
+      summary: 结束会话
+      operationId: end_session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: 会话已结束
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /v1/execution-request:
+    post:
+      summary: 工具调用前决策（核心端点，可能长挂起）
+      operationId: execution_request
+      description: >
+        Loop Breaker 与 Active Breakpoint 统一决策入口。
+        命中断点时服务端延迟响应，直到用户放行/拒绝。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutionRequest"
+      responses:
+        "200":
+          description: 决策结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/tool-result:
+    post:
+      summary: 工具执行后记录结果（Observation）
+      operationId: record_tool_result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolResult"
+      responses:
+        "200":
+          description: 已记录
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/thought:
+    post:
+      summary: 记录 Thought
+      operationId: record_thought
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Thought"
+      responses:
+        "200":
+          description: 已记录
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/breakpoints:
+    get:
+      summary: 读取断点配置
+      operationId: get_breakpoints
+      responses:
+        "200":
+          description: 当前断点配置
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakpointConfig"
+    put:
+      summary: 更新断点配置
+      operationId: update_breakpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BreakpointConfig"
+      responses:
+        "200":
+          description: 配置已更新
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakpointConfig"
+
+  /v1/decisions/{decision_id}/resolve:
+    post:
+      summary: 放行/拒绝挂起决策
+      operationId: resolve_decision
+      parameters:
+        - $ref: "#/components/parameters/DecisionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [allow, reject]
+      responses:
+        "200":
+          description: 已处理
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+    DecisionId:
+      name: decision_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+
+  schemas:
+    Session:
+      type: object
+      required: [session_id, status, created_at]
+      properties:
+        session_id:
+          type: string
+          description: 会话唯一标识（UUID）
+        status:
+          type: string
+          enum: [running, paused, ended]
+        created_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SessionSummary:
+      type: object
+      required: [session_id, status, created_at]
+      properties:
+        session_id:
+          type: string
+        status:
+          type: string
+          enum: [running, paused, ended]
+        created_at:
+          type: string
+          format: date-time
+        tool_count:
+          type: integer
+          description: 工具调用次数
+        token_usage:
+          type: integer
+          description: token 消耗（MVP 可选）
+
+    TraceNode:
+      type: object
+      required: [node_id, type, created_at]
+      properties:
+        node_id:
+          type: string
+        type:
+          type: string
+          enum: [thought, tool_call, tool_result]
+        parent_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        content:
+          description: 按 type 变化（thought 文本 / 工具名+参数 / 结果），任意 JSON 类型
+
+    ExecutionRequest:
+      type: object
+      required: [session_id, tool_name, args]
+      properties:
+        session_id:
+          type: string
+        tool_name:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+          description: 工具参数，任意 JSON 对象
+
+    ExecutionResponse:
+      type: object
+      required: [decision, decision_id]
+      properties:
+        decision:
+          type: string
+          enum: [allow, reject]
+        reason:
+          type: string
+          enum: [loop, human]
+          nullable: true
+          description: reject 时的原因；allow 时为 null
+        decision_id:
+          type: string
+
+    ToolResult:
+      type: object
+      required: [session_id, tool_name, ok]
+      properties:
+        session_id:
+          type: string
+        tool_name:
+          type: string
+        ok:
+          type: boolean
+        result:
+          nullable: true
+          description: 工具返回值，任意 JSON 类型（对象/数组/标量均可）
+        error:
+          type: string
+          nullable: true
+        duration_ms:
+          type: integer
+
+    Thought:
+      type: object
+      required: [session_id, content]
+      properties:
+        session_id:
+          type: string
+        content:
+          type: string
+
+    BreakpointConfig:
+      type: object
+      properties:
+        suspend_tools:
+          type: array
+          items:
+            type: string
+          description: 命中即挂起的工具名列表
+        loop_breaker:
+          type: object
+          properties:
+            window_size:
+              type: integer
+              default: 3
+            similarity_threshold:
+              type: number
+              default: 0.9
+
+    DecisionSummary:
+      type: object
+      required: [decision_id, tool_name, args, created_at]
+      properties:
+        decision_id:
+          type: string
+        session_id:
+          type: string
+        tool_name:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
