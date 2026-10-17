@@ -5,14 +5,819 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MicroAgent-Lens</title>
     <style>
-      body {
-        font-family: system-ui, sans-serif;
-        margin: 2rem;
+      /* ===== 设计系统：暗黑主题 CSS 变量 ===== */
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --panel-2: #1c2128;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-dim: #8b949e;
+        --accent: #58a6ff;
+        --thought: #d2a8ff;
+        --tool-call: #79c0ff;
+        --tool-result: #7ee787;
+        --running: #3fb950;
+        --paused: #d29922;
+        --ended: #8b949e;
+        --danger: #f85149;
+        --ok: #3fb950;
+        --mono: "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 14px;
+      }
+
+      body { display: flex; flex-direction: column; overflow: hidden; }
+
+      .mono { font-family: var(--mono); }
+      .hidden { display: none !important; }
+
+      /* ===== 顶栏 ===== */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 52px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        flex: none;
+      }
+      .brand { font-weight: 700; font-size: 15px; letter-spacing: 0.3px; }
+      .brand .accent { color: var(--accent); }
+      .conn { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; }
+      .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ended); }
+      .conn-dot.on { background: var(--running); box-shadow: 0 0 6px var(--running); }
+
+      /* ===== 三区布局 ===== */
+      .layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        min-height: 0;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        min-height: 0;
+      }
+
+      .pane { display: flex; flex-direction: column; min-height: 0; }
+      .pane + .pane, main > .pane { border-left: 1px solid var(--border); }
+      .pane-title {
+        flex: none;
+        padding: 10px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--text-dim);
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+
+      /* ===== 会话列表 ===== */
+      #sessionList { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+      #sessionList .empty { color: var(--text-dim); text-align: center; padding: 24px 0; }
+      .session {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-bottom: 4px;
+        border: 1px solid transparent;
+      }
+      .session:hover { background: var(--panel-2); }
+      .session.selected { background: var(--panel-2); border-color: var(--accent); }
+      .session-id { font-family: var(--mono); font-size: 12px; color: var(--text); }
+      .session-meta { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+
+      .badge {
+        flex: none;
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .badge-running { color: var(--running); background: rgba(63, 185, 80, 0.15); }
+      .badge-paused { color: var(--paused); background: rgba(210, 153, 34, 0.15); }
+      .badge-ended { color: var(--ended); background: rgba(139, 148, 158, 0.15); }
+
+      /* ===== trace 列表 ===== */
+      #traceList { flex: 1; overflow-y: auto; padding: 12px; }
+      #traceEmpty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+
+      .node {
+        border-left: 3px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        margin-bottom: 10px;
+        padding: 10px 12px;
+      }
+      .node-thought { border-left-color: var(--thought); }
+      .node-tool_call { border-left-color: var(--tool-call); }
+      .node-tool_result { border-left-color: var(--tool-result); }
+      .node-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .node-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+      .node-thought .node-tag { color: var(--thought); }
+      .node-tool_call .node-tag { color: var(--tool-call); }
+      .node-tool_result .node-tag { color: var(--tool-result); }
+      .node-time { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+      .node-body { font-size: 13px; }
+      .thought-text { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+      .kv { display: flex; align-items: baseline; gap: 8px; margin: 3px 0; }
+      .kv .k { flex: none; font-size: 11px; color: var(--text-dim); }
+      .kv .v { word-break: break-word; }
+      .kv .v.ok { color: var(--ok); }
+      .kv .v.err { color: var(--danger); }
+      .args {
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 12px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* ===== 断点配置面板 ===== */
+      #breakpointPane { overflow-y: auto; padding: 14px; }
+      .bp-section { margin-bottom: 18px; }
+      .bp-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px; }
+      .bp-row { display: flex; gap: 8px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 9px;
+        border-radius: 14px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .chip-x {
+        border: none;
+        background: none;
+        color: var(--text-dim);
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        padding: 0;
+      }
+      .chip-x:hover { color: var(--danger); }
+      .bp-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+
+      input[type="text"], input[type="number"] {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 7px 10px;
+        font-size: 13px;
+        outline: none;
+      }
+      input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accent); }
+      input[type="number"] { width: 90px; }
+      .field-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .field-row label { color: var(--text-dim); font-size: 13px; }
+
+      .btn {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        background: var(--panel-2);
+        color: var(--text);
+      }
+      .btn:hover { border-color: var(--accent); }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #0d1117; }
+      .btn-primary:hover { filter: brightness(1.1); }
+      .btn-allow { background: rgba(63, 185, 80, 0.15); border-color: var(--running); color: var(--running); }
+      .btn-allow:hover { background: rgba(63, 185, 80, 0.3); }
+      .btn-reject { background: rgba(248, 81, 73, 0.12); border-color: var(--danger); color: var(--danger); }
+      .btn-reject:hover { background: rgba(248, 81, 73, 0.25); }
+      .btn-block { width: 100%; }
+
+      /* ===== 挂起弹框 ===== */
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+      .modal-card {
+        width: min(560px, 92vw);
+        max-height: 80vh;
+        overflow-y: auto;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px;
+      }
+      .modal-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+      .pending {
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--paused);
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .pending-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .pending-head .mono { font-size: 14px; font-weight: 700; color: var(--text); }
+      .pending-sid { font-size: 11px; color: var(--text-dim); }
+      .pending-actions { display: flex; gap: 10px; margin-top: 10px; }
+      .pending-actions .btn { flex: 1; }
+
+      /* ===== toast ===== */
+      .toast-container {
+        position: fixed;
+        top: 62px;
+        right: 16px;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .toast {
+        padding: 10px 14px;
+        border-radius: 6px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        font-size: 13px;
+        max-width: 360px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      }
+      .toast-ok { border-color: var(--running); }
+      .toast-warn { border-color: var(--paused); }
+      .toast-error { border-color: var(--danger); }
+      .toast.fade { opacity: 0; transition: opacity 0.3s; }
+
+      /* ===== 滚动条 ===== */
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+
+      /* ===== 响应式：窄屏折叠单列 ===== */
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+        main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+        .pane + .pane, main > .pane { border-left: none; border-top: 1px solid var(--border); }
+        #sessionList { max-height: 180px; }
       }
     </style>
   </head>
   <body>
-    <h1>MicroAgent-Lens</h1>
-    <p>控制面板将在阶段 5 实现。</p>
+    <header>
+      <div class="brand">MicroAgent-<span class="accent">Lens</span></div>
+      <div class="conn"><span class="conn-dot" id="connDot"></span><span id="connText">连接中…</span></div>
+    </header>
+
+    <div class="layout">
+      <aside class="pane">
+        <div class="pane-title">会话</div>
+        <ul id="sessionList"></ul>
+      </aside>
+
+      <main>
+        <section class="pane" id="tracePane">
+          <div class="pane-title">Trace</div>
+          <div id="traceEmpty">选择左侧会话查看 trace</div>
+          <div id="traceList" class="hidden"></div>
+        </section>
+
+        <section class="pane" id="breakpointPane">
+          <div class="pane-title">断点配置</div>
+
+          <div class="bp-section">
+            <label class="bp-label" for="suspendInput">挂起工具名单（suspend）</label>
+            <div class="bp-row">
+              <input type="text" id="suspendInput" placeholder="工具名，如 send_email" style="flex:1" />
+              <button class="btn" id="suspendAdd">添加</button>
+            </div>
+            <div class="chips" id="suspendChips" style="margin-top:8px"></div>
+            <div class="bp-hint">命中名单的工具调用会挂起并弹出决策框，等待放行 / 拒绝。</div>
+          </div>
+
+          <div class="bp-section">
+            <label class="bp-label">熔断参数（Loop Breaker）</label>
+            <div class="field-row">
+              <label for="windowSize">窗口大小</label>
+              <input type="number" id="windowSize" min="1" step="1" />
+            </div>
+            <div class="field-row">
+              <label for="similarityThreshold">相似度阈值</label>
+              <input type="number" id="similarityThreshold" min="0" max="1" step="0.05" />
+            </div>
+            <div class="bp-hint">连续 window_size 次同名同参（相似度 ≥ 阈值）触发熔断。</div>
+          </div>
+
+          <button class="btn btn-primary btn-block" id="breakpointsSave">保存配置</button>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal hidden" id="modal">
+      <div class="modal-card">
+        <div class="modal-title">挂起决策 — 请放行或拒绝</div>
+        <div id="pendingList"></div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toast"></div>
+
+    <script>
+      "use strict";
+
+      // ===== 前端状态（单页无框架，集中一处）=====
+      const state = {
+        sessions: [],
+        selectedId: null,
+        trace: [],
+        breakpoints: { suspend_tools: [], loop_breaker: { window_size: 3, similarity_threshold: 0.9 } },
+        pending: new Map(), // decision_id -> {decision_id, session_id, tool_name, args, created_at}
+        resolving: new Set(), // 正在 resolve 的 decision_id，防连点
+        ws: null,
+        reconnectTimer: null,
+      };
+
+      const $ = (sel) => document.querySelector(sel);
+      const els = {
+        connDot: $("#connDot"),
+        connText: $("#connText"),
+        sessionList: $("#sessionList"),
+        traceEmpty: $("#traceEmpty"),
+        traceList: $("#traceList"),
+        suspendInput: $("#suspendInput"),
+        suspendAdd: $("#suspendAdd"),
+        suspendChips: $("#suspendChips"),
+        windowSize: $("#windowSize"),
+        similarityThreshold: $("#similarityThreshold"),
+        breakpointsSave: $("#breakpointsSave"),
+        modal: $("#modal"),
+        pendingList: $("#pendingList"),
+        toast: $("#toast"),
+      };
+
+      const NODE_LABEL = { thought: "Thought", tool_call: "Action", tool_result: "Observation" };
+      const STATUS_LABEL = { running: "运行中", paused: "挂起", ended: "已结束" };
+
+      // ===== 工具函数 =====
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+        }[c]));
+      }
+
+      function shortId(id) {
+        return id ? id.slice(0, 8) : "";
+      }
+
+      function fmtTime(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString("zh-CN", { hour12: false });
+      }
+
+      function toast(msg, kind) {
+        const el = document.createElement("div");
+        el.className = "toast toast-" + (kind || "info");
+        el.textContent = msg;
+        els.toast.appendChild(el);
+        setTimeout(() => {
+          el.classList.add("fade");
+          setTimeout(() => el.remove(), 300);
+        }, 3000);
+      }
+
+      // ===== HTTP API 层 =====
+      async function api(method, path, body) {
+        const opts = { method };
+        if (body !== undefined) {
+          opts.headers = { "Content-Type": "application/json" };
+          opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch(path, opts);
+        if (!resp.ok) {
+          // 已知坑：404 用 error 键，非 detail。
+          let msg = "HTTP " + resp.status;
+          try {
+            const data = await resp.json();
+            if (data && typeof data.error === "string") msg = data.error;
+          } catch (_) { /* 非 JSON 响应体，保留默认消息 */ }
+          throw new Error(msg);
+        }
+        return resp.json();
+      }
+
+      const apiListSessions = () => api("GET", "/v1/sessions");
+      const apiGetSession = (id) => api("GET", "/v1/sessions/" + encodeURIComponent(id));
+      const apiGetBreakpoints = () => api("GET", "/v1/breakpoints");
+      const apiPutBreakpoints = (cfg) => api("PUT", "/v1/breakpoints", cfg);
+      const apiResolve = (id, action) =>
+        api("POST", "/v1/decisions/" + encodeURIComponent(id) + "/resolve", { action });
+
+      // ===== 会话列表渲染 =====
+      function renderSessionList() {
+        els.sessionList.innerHTML = "";
+        if (state.sessions.length === 0) {
+          const li = document.createElement("li");
+          li.className = "empty";
+          li.textContent = "暂无会话";
+          els.sessionList.appendChild(li);
+          return;
+        }
+        for (const s of state.sessions) {
+          const li = document.createElement("li");
+          li.className = "session" + (s.session_id === state.selectedId ? " selected" : "");
+          const badge = document.createElement("span");
+          badge.className = "badge badge-" + s.status;
+          badge.textContent = STATUS_LABEL[s.status] || s.status;
+          const id = document.createElement("span");
+          id.className = "session-id";
+          id.textContent = shortId(s.session_id);
+          const meta = document.createElement("span");
+          meta.className = "session-meta";
+          meta.textContent = "工具 " + (s.tool_count || 0);
+          li.appendChild(badge);
+          li.appendChild(id);
+          li.appendChild(meta);
+          li.addEventListener("click", () => selectSession(s.session_id));
+          els.sessionList.appendChild(li);
+        }
+      }
+
+      async function selectSession(id) {
+        state.selectedId = id;
+        renderSessionList();
+        await loadTrace(id);
+      }
+
+      async function loadTrace(id) {
+        try {
+          const data = await apiGetSession(id);
+          state.trace = data.trace || [];
+          mergePending(data.pending_decisions || []);
+          renderTrace();
+        } catch (e) {
+          toast("加载会话失败: " + e.message, "error");
+        }
+      }
+
+      function mergePending(list) {
+        for (const d of list) state.pending.set(d.decision_id, d);
+        renderModal();
+      }
+
+      // ===== trace 渲染（扁平，三色区分）=====
+      function renderTrace() {
+        els.traceList.innerHTML = "";
+        if (state.selectedId === null) {
+          els.traceEmpty.textContent = "选择左侧会话查看 trace";
+          els.traceEmpty.classList.remove("hidden");
+          els.traceList.classList.add("hidden");
+          return;
+        }
+        if (state.trace.length === 0) {
+          els.traceEmpty.textContent = "暂无 trace 节点";
+          els.traceEmpty.classList.remove("hidden");
+          els.traceList.classList.add("hidden");
+          return;
+        }
+        els.traceEmpty.classList.add("hidden");
+        els.traceList.classList.remove("hidden");
+        for (const n of state.trace) els.traceList.appendChild(renderNode(n));
+        scrollTraceBottom();
+      }
+
+      function renderNode(node) {
+        const el = document.createElement("div");
+        el.className = "node node-" + node.type;
+        const head = document.createElement("div");
+        head.className = "node-head";
+        const tag = document.createElement("span");
+        tag.className = "node-tag";
+        tag.textContent = NODE_LABEL[node.type] || node.type;
+        const time = document.createElement("span");
+        time.className = "node-time";
+        time.textContent = fmtTime(node.created_at);
+        head.appendChild(tag);
+        head.appendChild(time);
+        const body = document.createElement("div");
+        body.className = "node-body";
+        body.innerHTML = formatContent(node);
+        el.appendChild(head);
+        el.appendChild(body);
+        return el;
+      }
+
+      function formatContent(node) {
+        const c = node.content;
+        if (node.type === "thought") {
+          return '<div class="thought-text">' + esc(c) + "</div>";
+        }
+        if (node.type === "tool_call") {
+          return '<div class="kv"><span class="k">工具</span><span class="v mono">' + esc(c && c.tool_name) + "</span></div>" +
+            '<div class="kv"><span class="k">参数</span><pre class="args mono">' + esc(JSON.stringify(c && c.args, null, 2)) + "</pre></div>";
+        }
+        if (node.type === "tool_result") {
+          let html = '<div class="kv"><span class="k">工具</span><span class="v mono">' + esc(c && c.tool_name) + "</span></div>";
+          html += '<div class="kv"><span class="k">结果</span><span class="v ' + (c && c.ok ? "ok" : "err") + '">' + (c && c.ok ? "成功" : "失败") + "</span></div>";
+          if (c && c.ok && c.result !== undefined && c.result !== null) {
+            html += '<div class="kv"><span class="k">返回</span><pre class="args mono">' + esc(JSON.stringify(c.result, null, 2)) + "</pre></div>";
+          }
+          if (c && !c.ok && c.error) {
+            html += '<div class="kv"><span class="k">错误</span><pre class="args mono">' + esc(c.error) + "</pre></div>";
+          }
+          if (c && c.duration_ms !== undefined && c.duration_ms !== null) {
+            html += '<div class="kv"><span class="k">耗时</span><span class="v">' + esc(c.duration_ms) + " ms</span></div>";
+          }
+          return html;
+        }
+        return '<div class="thought-text">' + esc(JSON.stringify(c)) + "</div>";
+      }
+
+      function scrollTraceBottom() {
+        els.traceList.scrollTop = els.traceList.scrollHeight;
+      }
+
+      // ===== WebSocket 事件 =====
+      function wsUrl() {
+        const proto = location.protocol === "https:" ? "wss://" : "ws://";
+        return proto + location.host + "/v1/stream";
+      }
+
+      function connect() {
+        const ws = new WebSocket(wsUrl());
+        state.ws = ws;
+        ws.onopen = () => {
+          setConn(true);
+          refresh(); // 重连 / 首连后全量回填（事件不重放）
+        };
+        ws.onmessage = (e) => {
+          try {
+            handleEvent(JSON.parse(e.data));
+          } catch (_) { /* 忽略无法解析的帧 */ }
+        };
+        ws.onclose = () => {
+          setConn(false);
+          scheduleReconnect();
+        };
+        ws.onerror = () => { /* onclose 会随后触发，统一走重连 */ };
+      }
+
+      function scheduleReconnect() {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = setTimeout(connect, 2000);
+      }
+
+      function setConn(connected) {
+        els.connDot.classList.toggle("on", connected);
+        els.connText.textContent = connected ? "已连接" : "连接中…";
+      }
+
+      function handleEvent(ev) {
+        switch (ev.type) {
+          case "session_status": onSessionStatus(ev); break;
+          case "node_added": onNodeAdded(ev); break;
+          case "decision_pending": onDecisionPending(ev); break;
+          case "decision_resolved": onDecisionResolved(ev); break;
+          case "loop_alert": onLoopAlert(ev); break;
+        }
+      }
+
+      function onSessionStatus(ev) {
+        const s = state.sessions.find((x) => x.session_id === ev.session_id);
+        if (s) {
+          s.status = ev.status;
+          renderSessionList();
+        }
+      }
+
+      function onNodeAdded(ev) {
+        const s = state.sessions.find((x) => x.session_id === ev.session_id);
+        if (s && ev.node && ev.node.type === "tool_call") {
+          s.tool_count = (s.tool_count || 0) + 1;
+          renderSessionList();
+        }
+        if (ev.session_id === state.selectedId && ev.node) {
+          state.trace.push(ev.node);
+          els.traceEmpty.classList.add("hidden");
+          els.traceList.classList.remove("hidden");
+          els.traceList.appendChild(renderNode(ev.node));
+          scrollTraceBottom();
+        }
+      }
+
+      function onDecisionPending(ev) {
+        if (ev.decision) {
+          state.pending.set(ev.decision.decision_id, ev.decision);
+          renderModal();
+        }
+      }
+
+      function onDecisionResolved(ev) {
+        state.pending.delete(ev.decision_id);
+        state.resolving.delete(ev.decision_id);
+        renderModal();
+      }
+
+      function onLoopAlert(ev) {
+        toast("熔断触发: " + ev.tool_name, "warn");
+      }
+
+      // ===== 挂起弹框 =====
+      function renderModal() {
+        els.pendingList.innerHTML = "";
+        const items = Array.from(state.pending.values());
+        if (items.length === 0) {
+          els.modal.classList.add("hidden");
+          return;
+        }
+        els.modal.classList.remove("hidden");
+        for (const d of items) els.pendingList.appendChild(renderPending(d));
+      }
+
+      function renderPending(d) {
+        const card = document.createElement("div");
+        card.className = "pending";
+        const head = document.createElement("div");
+        head.className = "pending-head";
+        const name = document.createElement("span");
+        name.className = "mono";
+        name.textContent = d.tool_name;
+        const sid = document.createElement("span");
+        sid.className = "pending-sid";
+        sid.textContent = shortId(d.session_id);
+        head.appendChild(name);
+        head.appendChild(sid);
+        const args = document.createElement("pre");
+        args.className = "args mono";
+        args.textContent = JSON.stringify(d.args, null, 2);
+        const actions = document.createElement("div");
+        actions.className = "pending-actions";
+        const allow = document.createElement("button");
+        allow.className = "btn btn-allow";
+        allow.textContent = "放行";
+        const reject = document.createElement("button");
+        reject.className = "btn btn-reject";
+        reject.textContent = "拒绝";
+        allow.addEventListener("click", () => resolveDecision(d.decision_id, "allow", allow, reject));
+        reject.addEventListener("click", () => resolveDecision(d.decision_id, "reject", allow, reject));
+        actions.appendChild(allow);
+        actions.appendChild(reject);
+        card.appendChild(head);
+        card.appendChild(args);
+        card.appendChild(actions);
+        return card;
+      }
+
+      async function resolveDecision(id, action, allowBtn, rejectBtn) {
+        if (state.resolving.has(id)) return;
+        state.resolving.add(id);
+        allowBtn.disabled = true;
+        rejectBtn.disabled = true;
+        try {
+          await apiResolve(id, action);
+          state.pending.delete(id); // 主动移除，避免 WS 断连时残留；WS 事件再删一次幂等
+          state.resolving.delete(id);
+          renderModal();
+        } catch (e) {
+          toast("处理失败: " + e.message, "error");
+          state.resolving.delete(id);
+          allowBtn.disabled = false;
+          rejectBtn.disabled = false;
+        }
+      }
+
+      // ===== 断点配置 =====
+      function renderBreakpoints() {
+        const tools = state.breakpoints.suspend_tools || [];
+        const lb = state.breakpoints.loop_breaker || { window_size: 3, similarity_threshold: 0.9 };
+        els.suspendChips.innerHTML = "";
+        for (const t of tools) {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          const label = document.createElement("span");
+          label.textContent = t;
+          const x = document.createElement("button");
+          x.className = "chip-x";
+          x.textContent = "×";
+          x.title = "移除";
+          x.addEventListener("click", () => {
+            state.breakpoints.suspend_tools = state.breakpoints.suspend_tools.filter((v) => v !== t);
+            renderBreakpoints();
+          });
+          chip.appendChild(label);
+          chip.appendChild(x);
+          els.suspendChips.appendChild(chip);
+        }
+        els.windowSize.value = lb.window_size;
+        els.similarityThreshold.value = lb.similarity_threshold;
+      }
+
+      function addSuspendTool() {
+        const v = els.suspendInput.value.trim();
+        if (!v) return;
+        if (!state.breakpoints.suspend_tools.includes(v)) {
+          state.breakpoints.suspend_tools.push(v);
+          renderBreakpoints();
+        }
+        els.suspendInput.value = "";
+      }
+
+      async function saveBreakpoints() {
+        const windowSize = parseInt(els.windowSize.value, 10);
+        const threshold = parseFloat(els.similarityThreshold.value);
+        if (isNaN(windowSize) || windowSize < 1) {
+          toast("窗口大小需为 ≥1 的整数", "error");
+          return;
+        }
+        if (isNaN(threshold) || threshold < 0 || threshold > 1) {
+          toast("相似度阈值需在 [0,1] 区间", "error");
+          return;
+        }
+        // 已知坑：PUT 省略字段会清空/回默认，恒同时携带两字段。
+        const cfg = {
+          suspend_tools: state.breakpoints.suspend_tools,
+          loop_breaker: { window_size: windowSize, similarity_threshold: threshold },
+        };
+        try {
+          const saved = await apiPutBreakpoints(cfg);
+          state.breakpoints = saved;
+          renderBreakpoints();
+          toast("断点配置已保存", "ok");
+        } catch (e) {
+          toast("保存失败: " + e.message, "error");
+        }
+      }
+
+      // ===== 全量刷新 =====
+      async function refreshSessions() {
+        try {
+          const data = await apiListSessions();
+          state.sessions = data.sessions || [];
+          renderSessionList();
+        } catch (e) {
+          toast("加载会话列表失败: " + e.message, "error");
+        }
+      }
+
+      async function refreshBreakpoints() {
+        try {
+          state.breakpoints = await apiGetBreakpoints();
+          renderBreakpoints();
+        } catch (e) {
+          toast("加载断点配置失败: " + e.message, "error");
+        }
+      }
+
+      async function refresh() {
+        await Promise.all([
+          refreshSessions(),
+          refreshBreakpoints(),
+          state.selectedId ? loadTrace(state.selectedId) : Promise.resolve(),
+        ]);
+      }
+
+      // ===== 初始化 =====
+      function init() {
+        els.suspendAdd.addEventListener("click", addSuspendTool);
+        els.suspendInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addSuspendTool();
+          }
+        });
+        els.breakpointsSave.addEventListener("click", saveBreakpoints);
+        refresh(); // 先走 HTTP 拉一遍，即使 WS 不可达也能看到列表
+        connect();
+      }
+
+      init();
+    </script>
   </body>
 </html>
