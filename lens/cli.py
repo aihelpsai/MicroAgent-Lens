@@ -28,6 +28,6 @@ def main() -> None:
 
 def _serve(host: str, port: int) -> None:
     """用 uvicorn 编程式启动 FastAPI 应用。"""
-    from lens.server.app import app
+    from lens.server.app import _default_db_path, create_app
 
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(create_app(_default_db_path()), host=host, port=port)
