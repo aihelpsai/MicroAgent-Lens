@@ -20,6 +20,7 @@
 | [定位与架构决策](investigation/2026-10-16-定位与架构决策.md) | 调研 | 已确认 | 差异化定位 + 核心架构 |
 | [通信协议 v0.1](design/2026-10-16-通信协议-v0.1.md) | 设计 | 草拟中 | 协议设计决策 + 语义（契约见根目录 openapi.yaml） |
 | [文档模板](template.md) | 规范 | 已确认 | 新建文档用 |
+| [新增 websockets 依赖](decisions/2026-10-17-新增-websockets-依赖.md) | ADR | 已确认 | WebSocket 实时推送需 websockets 运行时依赖 |
 
 ## 编写规范
 
